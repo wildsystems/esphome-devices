@@ -119,3 +119,56 @@ For ESPHome configuration help, visit:
 ---
 
 **Made by WildSystems**
+
+---
+
+## Development Setup
+
+For contributors adding new devices to this repository:
+
+### Clone and Setup
+
+```bash
+# Clone the repo
+git clone https://github.com/wildsystems/esphome-devices.git
+cd esphome-devices
+
+# Install ESPHome (for validation)
+pip install esphome
+
+# The pre-commit hook is already in the repo
+# Test it works:
+./validate-all.sh
+```
+
+### Adding a New Device
+
+1. Create `your-device.yaml` (see `CONTRIBUTING.md`)
+2. Test locally:
+   ```bash
+   esphome config your-device.yaml
+   ```
+3. Run full validation:
+   ```bash
+   ./validate-all.sh
+   ```
+4. Commit (pre-commit hook validates automatically):
+   ```bash
+   git add your-device.yaml
+   git commit -m "feat: Add your-device config"
+   ```
+5. Push and create PR
+
+### Pre-commit Validation
+
+The pre-commit hook automatically validates all staged `*.yaml` configs before allowing commit.
+
+To bypass (not recommended):
+```bash
+git commit --no-verify
+```
+
+To manually validate all configs:
+```bash
+./validate-all.sh
+```
