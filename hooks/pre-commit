@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Pre-commit hook: Validate ESPHome configs before allowing commit
+# =============================================================================
+
+# Check if esphome is available
+if ! command -v esphome &> /dev/null; then
+  echo "⚠️  Warning: esphome not found in PATH"
+  echo "   Install with: pip install esphome"
+  echo "   Skipping validation."
+  exit 0
+fi
+
+# Get list of staged YAML files in root directory
+STAGED_CONFIGS=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^[^/]+\.yaml$' || true)
+
+if [ -z "$STAGED_CONFIGS" ]; then
+  # No device configs staged, allow commit
+  exit 0
+fi
+
+echo "Pre-commit: Validating staged ESPHome configs..."
+echo
+
+FAILED=0
+for config in $STAGED_CONFIGS; do
+  echo -n "  $config ... "
+  if esphome config "$config" > /dev/null 2>&1; then
+    echo "✓"
+  else
+    echo "✗ FAILED"
+    echo
+    echo "Validation errors:"
+    esphome config "$config" 2>&1 | head -20
+    ((FAILED++))
+  fi
+done
+
+if [ $FAILED -gt 0 ]; then
+  echo
+  echo "❌ Commit blocked: $FAILED config(s) failed validation"
+  echo "   Fix errors and try again, or use 'git commit --no-verify' to bypass"
+  exit 1
+fi
+
+echo
+echo "✅ All staged configs valid"
+exit 0
