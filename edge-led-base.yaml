@@ -1,0 +1,456 @@
+# =============================================================================
+# WildSystems Edge LED Base - Public ESPHome Dashboard Import Config
+# =============================================================================
+#
+# This configuration is designed for ESPHome Dashboard import and adoption.
+# It provides full standalone functionality out-of-the-box with single-button
+# control, local web UI, and Improv WiFi provisioning.
+#
+# Hardware: ESP32-C6-WROOM-H8, WS2813B LED strip, single control button
+#
+# For detailed documentation, see:
+# https://github.com/wildsystems/esphome-devices
+# =============================================================================
+
+substitutions:
+  # Device identification (automatically gets MAC suffix)
+  device_base_name: edge-led-base
+  friendly_base_name: "Edge LED Base"
+  
+  # Hardware configuration - customize for your setup
+  num_leds: "30"
+  led_data_pin: GPIO18
+  button_pin: GPIO9
+  
+  # UX timings - adjust to preference
+  default_transition_ms: "250ms"
+  long_press_threshold_ms: "600ms"
+  ramp_tick_ms: "40ms"
+  ramp_step: "0.02"
+  factory_reset_window_ms: "10000"
+  factory_reset_press_count: "5"
+
+esphome:
+  name: ${device_base_name}
+  friendly_name: ${friendly_base_name}
+  name_add_mac_suffix: true
+  project:
+    name: wildsystems.edge-led-base
+    version: "0.1.0"
+  min_version: "2024.6.0"
+
+# =============================================================================
+# Dashboard Import - Required for ESPHome Dashboard Adoption
+# =============================================================================
+# This allows the device to be auto-discovered and adopted in the ESPHome
+# dashboard. Users can provision WiFi and customize LED count without editing
+# the full config.
+# =============================================================================
+
+dashboard_import:
+  package_import_url: github://wildsystems/esphome-devices/edge-led-base.yaml@main
+  import_full_config: false
+
+# =============================================================================
+# Hardware Platform
+# =============================================================================
+
+esp32:
+  board: esp32-c6-wroom-h8
+  variant: esp32c6
+  framework:
+    type: esp-idf
+
+# =============================================================================
+# Core Services - Required for Dashboard Adoption
+# =============================================================================
+
+logger:
+  level: INFO
+  baud_rate: 115200
+
+# Native API for Home Assistant (required for dashboard import)
+api:
+  reboot_timeout: 0s
+
+# OTA updates (required for dashboard import)
+ota:
+  - platform: esphome
+
+# Local web server for standalone control
+web_server:
+  version: 3
+  local: true
+
+# =============================================================================
+# Network & Provisioning
+# =============================================================================
+
+wifi:
+  # WiFi credentials will be provisioned by user via captive portal or Improv
+  ap:
+    password: "edgeled-setup"
+  power_save_mode: light
+
+# Captive portal for WiFi provisioning (works with AP mode)
+captive_portal:
+
+# BLE provisioning via Improv protocol
+esp32_improv:
+  authorizer: none
+
+# Serial provisioning during initial flash
+improv_serial:
+
+# mDNS for edge-led-base-xxxxxx.local resolution
+mdns:
+  disabled: false
+
+# =============================================================================
+# LED Control - WS2813B Addressable Strip
+# =============================================================================
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: led_strip
+    name: "LED Strip"
+    chipset: WS2813
+    rgb_order: GRB
+    pin: ${led_data_pin}
+    num_leds: ${num_leds}
+    rmt_symbols: 192
+    default_transition_length: ${default_transition_ms}
+    restore_mode: ALWAYS_OFF
+    
+    # Full effect library for maximum flexibility
+    effects:
+      - pulse:
+          name: "Pulse"
+      - pulse:
+          name: "Pulse Fast"
+          transition_length: 0.5s
+          update_interval: 0.5s
+      - random:
+          name: "Random"
+      - strobe:
+          name: "Strobe"
+      - flicker:
+          name: "Flicker"
+      - addressable_rainbow:
+          name: "Rainbow"
+      - addressable_rainbow:
+          name: "Rainbow Slow"
+          speed: 5
+          width: 50
+      - addressable_color_wipe:
+          name: "Color Wipe"
+      - addressable_scan:
+          name: "Scan"
+      - addressable_twinkle:
+          name: "Twinkle"
+      - addressable_random_twinkle:
+          name: "Random Twinkle"
+      - addressable_fireworks:
+          name: "Fireworks"
+      - addressable_flicker:
+          name: "Addressable Flicker"
+
+# =============================================================================
+# Single-Button Control (GPIO9)
+# =============================================================================
+# Gesture mapping:
+#   - Single press          -> Toggle ON/OFF
+#   - Double press          -> Next color preset
+#   - Triple press          -> Next effect
+#   - Long press (>=600ms)  -> Ramp brightness (direction flips each time)
+#   - 5 presses in 10s      -> Factory reset
+#
+# Note: GPIO9 is the ESP32-C6 BOOT/strapping pin - button is active-LOW with
+# internal pull-up. Holding at power-on enters download mode (expected).
+# =============================================================================
+
+globals:
+  - id: g_color_index
+    type: int
+    restore_value: true
+    initial_value: "0"
+  - id: g_brightness
+    type: float
+    restore_value: true
+    initial_value: "0.5"
+  - id: g_last_effect
+    type: int
+    restore_value: true
+    initial_value: "0"
+  - id: g_restore_on_boot
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: g_ramp_direction
+    type: int
+    restore_value: false
+    initial_value: "1"
+  - id: g_press_count
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: g_press_window_start
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: g_long_press_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+switch:
+  - platform: template
+    name: "Restore on Boot"
+    id: restore_on_boot_switch
+    icon: "mdi:restore"
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: return id(g_restore_on_boot);
+    turn_on_action:
+      - lambda: id(g_restore_on_boot) = true;
+    turn_off_action:
+      - lambda: id(g_restore_on_boot) = false;
+
+binary_sensor:
+  - platform: gpio
+    id: user_button
+    name: "User Button"
+    pin:
+      number: ${button_pin}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_press:
+      - script.execute: register_press_for_factory_reset
+    on_release:
+      - script.execute: stop_ramp_brightness
+    on_click:
+      min_length: ${long_press_threshold_ms}
+      max_length: 60000ms
+      then:
+        - script.execute: ramp_brightness
+    on_multi_click:
+      - timing:
+          - ON for at most ${long_press_threshold_ms}
+          - OFF for at least 350ms
+        then:
+          - logger.log: "Button: single press -> toggle"
+          - script.execute: toggle_light
+      - timing:
+          - ON for at most 250ms
+          - OFF for at most 250ms
+          - ON for at most 250ms
+          - OFF for at least 350ms
+        then:
+          - logger.log: "Button: double press -> next color"
+          - script.execute: cycle_color
+      - timing:
+          - ON for at most 250ms
+          - OFF for at most 250ms
+          - ON for at most 250ms
+          - OFF for at most 250ms
+          - ON for at most 250ms
+          - OFF for at least 350ms
+        then:
+          - logger.log: "Button: triple press -> next effect"
+          - script.execute: cycle_effect
+
+# =============================================================================
+# Control Scripts
+# =============================================================================
+
+script:
+  - id: toggle_light
+    mode: restart
+    then:
+      - if:
+          condition:
+            light.is_on: led_strip
+          then:
+            - light.turn_off:
+                id: led_strip
+                transition_length: 250ms
+          else:
+            - script.execute: apply_current_color
+
+  - id: apply_current_color
+    mode: restart
+    then:
+      - lambda: |-
+          static const float kPresets[9][3] = {
+            {1.00f, 0.00f, 0.00f},  // Red
+            {1.00f, 0.45f, 0.00f},  // Orange
+            {1.00f, 1.00f, 0.00f},  // Yellow
+            {0.00f, 1.00f, 0.00f},  // Green
+            {0.00f, 1.00f, 1.00f},  // Cyan
+            {0.00f, 0.00f, 1.00f},  // Blue
+            {0.55f, 0.00f, 1.00f},  // Purple
+            {1.00f, 0.00f, 1.00f},  // Magenta
+            {1.00f, 1.00f, 1.00f},  // White
+          };
+          int idx = id(g_color_index);
+          if (idx < 0 || idx > 8) idx = 0;
+          float r = kPresets[idx][0];
+          float g = kPresets[idx][1];
+          float b = kPresets[idx][2];
+          float bri = id(g_brightness);
+          if (bri < 0.02f) bri = 0.02f;
+          if (bri > 1.0f)  bri = 1.0f;
+          auto call = id(led_strip).turn_on();
+          call.set_transition_length(250);
+          call.set_brightness(bri);
+          call.set_rgb(r, g, b);
+          call.set_effect("None");
+          call.perform();
+
+  - id: cycle_color
+    mode: restart
+    then:
+      - lambda: id(g_color_index) = (id(g_color_index) + 1) % 9;
+      - script.execute: apply_current_color
+
+  - id: cycle_effect
+    mode: restart
+    then:
+      - lambda: |-
+          static const char* kEffects[] = {
+            "Pulse", "Pulse Fast", "Random", "Strobe", "Flicker",
+            "Rainbow", "Rainbow Slow", "Color Wipe", "Scan",
+            "Twinkle", "Random Twinkle", "Fireworks", "Addressable Flicker",
+          };
+          const int kCount = sizeof(kEffects) / sizeof(kEffects[0]);
+          id(g_last_effect) = (id(g_last_effect) + 1) % kCount;
+          const char* name = kEffects[id(g_last_effect)];
+          float bri = id(g_brightness);
+          if (bri < 0.02f) bri = 0.02f;
+          auto call = id(led_strip).turn_on();
+          call.set_brightness(bri);
+          call.set_effect(name);
+          call.perform();
+          ESP_LOGI("led", "Effect -> %s", name);
+
+  - id: ramp_brightness
+    mode: restart
+    then:
+      - lambda: id(g_long_press_active) = true;
+      - while:
+          condition:
+            lambda: 'return id(g_long_press_active);'
+          then:
+            - lambda: |-
+                float bri = id(g_brightness);
+                bri += ((float) id(g_ramp_direction)) * ${ramp_step};
+                if (bri < 0.02f) { bri = 0.02f; id(g_ramp_direction) = 1;  }
+                if (bri > 1.00f) { bri = 1.00f; id(g_ramp_direction) = -1; }
+                id(g_brightness) = bri;
+                if (id(led_strip).remote_values.is_on()) {
+                  auto call = id(led_strip).turn_on();
+                  call.set_transition_length(0);
+                  call.set_brightness(bri);
+                  call.perform();
+                }
+            - delay: ${ramp_tick_ms}
+
+  - id: stop_ramp_brightness
+    mode: restart
+    then:
+      - lambda: |-
+          id(g_long_press_active) = false;
+          id(g_ramp_direction) = -id(g_ramp_direction);
+
+  - id: register_press_for_factory_reset
+    mode: single
+    then:
+      - lambda: |-
+          uint32_t now = millis();
+          uint32_t window = ${factory_reset_window_ms};
+          if (id(g_press_count) == 0 || (now - id(g_press_window_start)) > window) {
+            id(g_press_window_start) = now;
+            id(g_press_count) = 1;
+          } else {
+            id(g_press_count) = id(g_press_count) + 1;
+          }
+      - if:
+          condition:
+            lambda: 'return id(g_press_count) >= ${factory_reset_press_count};'
+          then:
+            - logger.log: "Factory reset triggered"
+            - script.execute: feedback_factory_reset
+            - delay: 1100ms
+            - lambda: |-
+                id(g_color_index) = 0;
+                id(g_brightness) = 0.5f;
+                id(g_last_effect) = 0;
+                id(g_restore_on_boot) = false;
+                id(g_press_count) = 0;
+            - button.press: factory_reset_button
+
+  - id: feedback_factory_reset
+    mode: restart
+    then:
+      - repeat:
+          count: 3
+          then:
+            - lambda: |-
+                auto call = id(led_strip).turn_on();
+                call.set_transition_length(0);
+                call.set_rgb(1.0f, 0.0f, 0.0f);
+                call.set_brightness(0.8f);
+                call.perform();
+            - delay: 180ms
+            - light.turn_off:
+                id: led_strip
+                transition_length: 0s
+            - delay: 180ms
+
+# =============================================================================
+# Diagnostic Entities
+# =============================================================================
+
+button:
+  - platform: restart
+    id: restart_button
+    name: "Restart"
+    entity_category: diagnostic
+
+  - platform: factory_reset
+    id: factory_reset_button
+    name: "Factory Reset"
+    entity_category: diagnostic
+    internal: true
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+    update_interval: 60s
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    entity_category: diagnostic
+    update_interval: 60s
+
+text_sensor:
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "SSID"
+      entity_category: diagnostic
+    mac_address:
+      name: "MAC Address"
+      entity_category: diagnostic

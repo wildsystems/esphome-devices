@@ -1,0 +1,27 @@
+# ESPHome build artifacts
+.esphome/
+build/
+**/.esphome/
+**/.pioenvs/
+**/.piolibdeps/
+.pio/
+
+# Secrets (should never be committed to public repo)
+secrets.yaml
+**/secrets.yaml
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

@@ -1,0 +1,29 @@
+name: ESPHome Config Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        device:
+          - edge-led-base
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install ESPHome
+        run: pip install esphome
+        
+      - name: Validate ${{ matrix.device }} config
+        run: esphome config ${{ matrix.device }}.yaml
